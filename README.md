@@ -1,6 +1,11 @@
 # QueueStorm Investigator
 
-An AI copilot for fintech support agents during high-volume campaign surges. It reads each customer complaint alongside their recent transaction history, determines what actually happened, classifies and routes the case, and drafts a safe reply — all without ever requesting credentials or promising unauthorized refunds.
+<p align="center">
+  <img src="https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white" />
+  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white" />
+  <img src="https://img.shields.io/badge/OpenRouter-6366F1?style=for-the-badge&logo=openrouter&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+</p>
 
 ## Tech Stack
 
@@ -29,11 +34,11 @@ Service listens on `PORT` (default 3000), bound to `0.0.0.0`.
 - Ticket analysis: `POST /analyze-ticket`
 - Swagger UI: `GET /api-docs`
 
-## AI Approach
+## AI/Model Approach
 
 The service uses a **hybrid rule-based + LLM** architecture:
 
-1. **Rule-based evidence engine** (deterministic, fast): Parses complaint text for signals (amount, time, transaction type, counterparty) and matches them against the provided transaction history using multi-signal scoring. Determines `relevant_transaction_id`, `evidence_verdict`, `case_type`, `severity`, `department`, and `human_review_required`.
+1. **Rule-based evidence engine** (for the evidence reasoning): Parses complaint text for signals (amount, time, transaction type, counterparty) and matches them against the provided transaction history using multi-signal scoring. Determines `relevant_transaction_id`, `evidence_verdict`, `case_type`, `severity`, `department`, and `human_review_required`.
 
 2. **LLM text generation** (OpenRouter auto-select): Sends the complaint, transaction data, and evidence analysis results to an LLM with a structured system prompt. The LLM generates the `agent_summary`, `recommended_next_action`, and `customer_reply` text fields.
 
