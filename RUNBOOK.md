@@ -17,17 +17,28 @@ Step by step instructions to bring this service up from a clean checkout.
    npm install
    ```
 
-4. **(Optional) Configure environment**
+4. **Configure environment**
    ```bash
    cp .env.example .env
-   # edit .env if you want a port other than 3000
    ```
+   Edit `.env` and set:
+   - `PORT` (default 3000)
+   - `OPENROUTER_API_KEY` (your OpenRouter API key)
+   - `MODEL_NAME` (default `auto` — OpenRouter auto-selects the best model)
+
+   Without `OPENROUTER_API_KEY`, the service still works using rule-based template responses for text fields.
 
 5. **Start the service**
    ```bash
    npm start
    ```
-   You should see: `Service listening on port 3000`
+   You should see:
+   ```
+   QueueStorm Investigator listening on port 3000
+   Health: http://localhost:3000/health
+   Analyze: http://localhost:3000/analyze-ticket
+   Swagger UI: http://localhost:3000/api-docs
+   ```
 
 6. **Confirm it's healthy**
    ```bash
@@ -38,4 +49,29 @@ Step by step instructions to bring this service up from a clean checkout.
    {"status":"ok"}
    ```
 
-That's it — no database, no external API keys, no build step required.
+7. **Test the analysis endpoint**
+   ```bash
+   curl -X POST http://localhost:3000/analyze-ticket \
+     -H "Content-Type: application/json" \
+     -d '{
+       "ticket_id": "TKT-TEST-001",
+       "complaint": "I sent 5000 taka to a wrong number around 2pm today",
+       "transaction_history": [
+         {
+           "transaction_id": "TXN-9101",
+           "timestamp": "2026-04-14T14:08:22Z",
+           "type": "transfer",
+           "amount": 5000,
+           "counterparty": "+8801719876543",
+           "status": "completed"
+         }
+       ]
+     }'
+   ```
+   Expected: A JSON response with all required fields from the problem statement Section 6.
+
+8. **Docker (alternative)**
+   ```bash
+   docker build -t queuestorm-investigator .
+   docker run -p 3000:3000 --env-file .env queuestorm-investigator
+   ```

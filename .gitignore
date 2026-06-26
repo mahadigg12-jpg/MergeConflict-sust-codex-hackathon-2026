@@ -3,3 +3,7 @@ node_modules/
 npm-debug.log*
 *.log
 .DS_Store
+.kilo/
+test-all.js
+tmp-pdf-extract.js
+test-all.js
