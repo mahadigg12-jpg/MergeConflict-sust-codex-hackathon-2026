@@ -1,0 +1,14 @@
+{
+  "name": "queuestorm-investigator",
+  "version": "1.0.0",
+  "description": "QueueStorm Investigator - AI/API SupportOps service",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "swagger-ui-express": "^5.0.1"
+  }
+}
