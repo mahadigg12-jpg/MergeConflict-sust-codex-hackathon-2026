@@ -367,7 +367,7 @@ function sendRequest(body) {
     const data = JSON.stringify(body);
     const req = http.request({
       hostname: 'localhost',
-      port: 3000,
+      port: 3001,
       path: '/analyze-ticket',
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
