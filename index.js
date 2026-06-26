@@ -132,23 +132,17 @@ app.post('/analyze-ticket', async (req, res) => {
     if (llmResult && llmResult.ticket_id) {
       response = {
         ticket_id: ticket.ticket_id,
-        relevant_transaction_id: llmResult.relevant_transaction_id !== undefined
-          ? llmResult.relevant_transaction_id
-          : evidenceResult.relevant_transaction_id,
-        evidence_verdict: llmResult.evidence_verdict || evidenceResult.evidence_verdict,
-        case_type: llmResult.case_type || evidenceResult.case_type,
-        severity: llmResult.severity || evidenceResult.severity,
-        department: llmResult.department || evidenceResult.department,
+        relevant_transaction_id: evidenceResult.relevant_transaction_id,
+        evidence_verdict: evidenceResult.evidence_verdict,
+        case_type: evidenceResult.case_type,
+        severity: evidenceResult.severity,
+        department: evidenceResult.department,
         agent_summary: llmResult.agent_summary || '',
         recommended_next_action: llmResult.recommended_next_action || '',
         customer_reply: llmResult.customer_reply || '',
-        human_review_required: llmResult.human_review_required !== undefined
-          ? llmResult.human_review_required
-          : evidenceResult.human_review_required,
-        confidence: llmResult.confidence !== undefined
-          ? llmResult.confidence
-          : evidenceResult.confidence,
-        reason_codes: llmResult.reason_codes || evidenceResult.reason_codes,
+        human_review_required: evidenceResult.human_review_required,
+        confidence: evidenceResult.confidence,
+        reason_codes: evidenceResult.reason_codes,
       };
     } else {
       response = buildTemplateResponse(ticket, evidenceResult);
