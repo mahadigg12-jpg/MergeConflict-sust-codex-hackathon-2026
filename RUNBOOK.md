@@ -8,8 +8,8 @@ Step by step instructions to bring this service up from a clean checkout.
 
 2. **Clone the repo**
    ```bash
-   git clone <your-repo-url>
-   cd <your-repo-folder>
+   git clone https://github.com/mahadigg12-jpg/MergeConflict-sust-codex-hackathon-2026.git
+   cd MergeConflict-sust-codex-hackathon-2026
    ```
 
 3. **Install dependencies**
@@ -68,7 +68,7 @@ Step by step instructions to bring this service up from a clean checkout.
        ]
      }'
    ```
-   Expected: A JSON response with all required fields from the problem statement Section 6.
+   Expected: A JSON response, refer to sample-output.json
 
 8. **Docker (alternative)**
    ```bash
