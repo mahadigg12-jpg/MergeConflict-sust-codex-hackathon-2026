@@ -7,6 +7,8 @@
   <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
 </p>
 
+Endpoint URL: 
+
 ## Tech Stack
 
 - Node.js 18+
@@ -32,6 +34,48 @@ flowchart TD
     D -- success --> F[Safety Filter]
     E --> F
     F --> G[JSON Response]
+```
+
+## End-to-End Request Pipeline
+
+```mermaid
+---
+config:
+  theme: neutral
+---
+sequenceDiagram
+    autonumber
+    actor Client as Judge / Client
+    participant API as Express API
+    participant Safety as Safety Filter
+    participant Engine as Rule Engine
+    participant LLM as LLM Client
+    participant OR as OpenRouter API
+    participant Template as Template Fallback
+
+    Client->>API: POST /analyze-ticket
+    API->>Safety: Check prompt injection
+    alt Injection Detected
+        Safety-->>Client: 200 OK (phishing response)
+    else Clean Request
+        Safety->>Engine: Run evidence analysis
+        Note over Engine: Extract amounts, times, match transactions
+        Engine-->>LLM: case_type · verdict · severity · department
+        LLM->>OR: POST with API key pool (up to 5 keys)
+        alt LLM Success (within 14s)
+            OR-->>LLM: JSON response
+            LLM-->>API: Merge AI + Rule Engine output
+        else 429 Rate Limit
+            Note over LLM: Retry same key 3x (500ms delay)
+            Note over LLM: Blacklist key → rotate to next
+        else Timeout / All Keys Exhausted
+            LLM->>Template: Trigger fallback
+            Template-->>API: Rule-based text response
+        end
+        API->>Safety: Apply regex post-filter
+        Note over Safety: Strip PIN requests · refund promises
+        API-->>Client: 200 OK JSON
+    end
 ```
 
 ## AI/Model Approach
