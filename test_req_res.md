@@ -118,6 +118,23 @@
 
 **Result: 7/7 fields match**
 
+**Why our engine succeeded:**
+- Single clear match: 5000 BDT amount matched TXN-9101 exactly.
+- Time match: complaint says "2pm", TXN-9101 timestamp is 14:08 — within 1 hour.
+- Type match: "sent" keyword matched `transfer` type.
+- Only one completed transfer in history, so no ambiguity.
+- `wrong_transfer` maps to `dispute_resolution` via `CASE_TYPE_TO_DEPARTMENT`.
+- Severity `high` from `SEVERITY_CASE_TYPE_MAP` for `wrong_transfer`.
+- `human_review_required = true` because `severity === 'high'`.
+
+**What the problem statement wanted (reference):**
+- Section 3 (The Investigator Twist): "Your service must read both [complaint and transaction history]. The complaint says one thing. The data may show another. Your service decides what is true." — Our engine correctly identified the matching transaction and confirmed the complaint is supported by evidence.
+- Section 6.1 (Response Fields): `relevant_transaction_id` should be "The transaction ID from the provided history that the complaint refers to" — TXN-9101 is the only logical match.
+- Section 6.1: `evidence_verdict` should be "consistent" when "data supports the complaint" — the completed 5000 BDT transfer to the wrong number supports the complaint.
+
+**How to fix (no fix needed — already correct):**
+- This case works because the signals are unambiguous. No code changes needed. The engine's multi-signal scoring (amount + time + type) correctly converged on TXN-9101 as the only viable match.
+
 ---
 
 ### SAMPLE-02 — Wrong transfer claim with inconsistent evidence
@@ -210,7 +227,20 @@
 
 **Result: 5/7 fields match — MISMATCH on evidence_verdict and severity**
 
-> **Why it failed:** The evidence engine matched TXN-9202 (2000 BDT transfer) and marked it `consistent` because the transaction data supports a transfer occurring. It did NOT detect the pattern of 3 prior transfers to the same counterparty, which should trigger `inconsistent`. The engine lacks "established recipient pattern" detection.
+**Why our engine failed:**
+1. **evidence_verdict = `consistent` instead of `inconsistent`:** Our engine found TXN-9202 (2000 BDT transfer) as the best match and marked it `consistent` because the transaction data shows a completed transfer — which technically "supports" the complaint that a transfer was made. It did NOT cross-reference the counterparty across all history entries. The history shows 3 prior transfers to the same `+8801812345678` over 9 days, establishing a pattern that contradicts the "wrong person" claim.
+2. **severity = `high` instead of `medium`:** Our engine uses `SEVERITY_CASE_TYPE_MAP` which maps `wrong_transfer` → `high`. The expected output uses `medium` because the evidence is inconsistent — the complaint is disputed, not confirmed.
+
+**What the problem statement wanted (reference):**
+- Section 3 (The Investigator Twist): "The complaint says one thing. The data may show another. Your service decides what is true." — The complaint says "wrong person", but the data shows 3 prior transfers to the same number. Our service failed to "decide what is true" by not analyzing the relationship between transactions.
+- Section 6.1 (Response Fields): `evidence_verdict` should be "inconsistent" when "data contradicts the complaint" — The established recipient pattern contradicts the wrong-transfer claim.
+- Section 6.1: `relevant_transaction_id` should be "The transaction ID from the provided history that the complaint refers to, or null if no transaction in the provided history matches." — The relevant transaction IS TXN-9202 (it's the one being disputed), so this is correct.
+- Section 6.1: Severity should reflect the actual risk level. An inconsistent claim is less urgent than a confirmed wrong transfer.
+
+**How to fix it:**
+1. **Add established-recipient detection in `lib/evidence-engine.js`:** After finding the best match, count how many times the same counterparty appears in the history. If `counterparty_match_count >= 3` and the case_type is `wrong_transfer`, override `evidence_verdict` to `inconsistent`. The rationale: 3+ prior transfers to the same number = established relationship, which contradicts the "wrong person" claim.
+2. **Adjust severity when evidence is inconsistent:** In the `determineSeverity` function, if `evidenceVerdict === 'inconsistent'`, cap severity at `medium` regardless of case_type. An unverified claim is less operationally urgent than a confirmed incident.
+3. **Add `established_recipient_pattern` to reason_codes** when this pattern is detected.
 
 ---
 
@@ -288,7 +318,17 @@
 
 **Result: 6/7 fields match — MISMATCH on severity**
 
-> **Why it failed:** Our engine uses amount thresholds (>=10000 = high) for severity. The 1200 BDT amount falls below the threshold, so severity defaulted to `medium` from the `SEVERITY_CASE_TYPE_MAP`. Expected output marks it `high` because a failed payment with balance deduction is operationally urgent.
+**Why our engine failed:**
+- **severity = `medium` instead of `high`:** Our `SEVERITY_CASE_TYPE_MAP` maps `payment_failed` → `medium`. The amount-based override only kicks in at >=10000 BDT. The complaint specifically says "balance was deducted" on a failed payment — this is operationally urgent because the customer lost money without receiving the service. The expected output marks it `high` for this reason.
+
+**What the problem statement wanted (reference):**
+- Section 7.1 (case_type): `payment_failed` is for "Transaction failed but balance may have been deducted." The "may have been deducted" qualifier signals financial risk, which should elevate severity.
+- Section 6.1 (Response Fields): `severity` should reflect operational urgency. A failed payment with claimed balance deduction is higher risk than a simple failed transaction.
+- Section 6.1: `recommended_next_action` should be "Suggested operational next step for the support agent" — the expected output's action ("initiate the automatic reversal flow within standard SLA") is more specific and actionable than our generic "proceed with standard handling."
+
+**How to fix it:**
+1. **Add complaint-signal severity boost in `lib/evidence-engine.js`:** In the `determineSeverity` function, after computing base severity from the case_type map, check if the complaint contains deduction-related keywords (`"deducted"`, `"balance"`, `"cut"`, `"কেটে নিয়েছে"`, `"ব্যালেন্স কমেছে"`). If `case_type === 'payment_failed'` AND deduction keywords are present, override severity to `high`.
+2. **Make `recommended_next_action` more context-aware:** When `payment_failed` + deduction claim, suggest specific action like "initiate reversal flow" instead of generic "proceed with standard handling."
 
 ---
 
@@ -366,6 +406,20 @@
 
 **Result: 7/7 fields match**
 
+**Why our engine succeeded:**
+- Single match: 500 BDT payment to MERCHANT-7821 matches the complaint exactly.
+- "refund" keyword maps to `refund_request` case_type.
+- `refund_request` maps to `customer_support` and `low` severity.
+- `human_review_required = false` because `severity !== 'high'/'critical'` and `evidence_verdict === 'consistent'`.
+- Safety: customer_reply does NOT promise a refund, only says "our team will verify through official channels."
+
+**What the problem statement wanted (reference):**
+- Section 8 (Safety Rules): "The service must never confirm a refund, reversal, account unblock, or recovery without authority. Use language like 'any eligible amount will be returned through official channels' instead of 'we will refund you'." — Our template reply says "our team will verify your account through official channels" which is safe.
+- Section 6.1: `evidence_verdict` = `consistent` because the completed payment exists in the history — the refund request is about a real transaction.
+
+**How to fix (no fix needed — already correct):**
+- The routing, classification, and safety are all correct. The text quality difference (expected output is more detailed) would be improved by the LLM, but the structural fields are all correct.
+
 ---
 
 ### SAMPLE-05 — Phishing or social engineering report
@@ -432,6 +486,21 @@
 | `customer_reply` safety | No PIN/OTP/refund promise | No PIN/OTP/refund promise | **Y** |
 
 **Result: 7/7 fields match**
+
+**Why our engine succeeded:**
+- Empty transaction history → `insufficient_data` verdict automatically.
+- "OTP" keyword + "asked for" pattern → `phishing_or_social_engineering` case_type.
+- `phishing_or_social_engineering` maps to `fraud_risk` department and `critical` severity via `SEVERITY_CASE_TYPE_MAP`.
+- `human_review_required = true` because `case_type === 'phishing_or_social_engineering'` and `severity === 'critical'`.
+
+**What the problem statement wanted (reference):**
+- Section 7.1 (case_type): `phishing_or_social_engineering` is for "Suspicious calls, SMS, or someone asking for PIN, OTP, or password." — The complaint describes exactly this scenario.
+- Section 6.1: `relevant_transaction_id` should be `null` when "no transaction in the provided history matches" — empty history = null.
+- Section 6.1: `evidence_verdict` should be `insufficient_data` when "cannot be determined from the provided history" — no transactions to investigate.
+- Section 8 (Safety Rules): The service must never ask for PIN/OTP — our reply correctly warns the customer instead.
+
+**How to fix (no fix needed — already correct):**
+- Classification, routing, severity, and safety are all correct. The LLM would generate more context-specific text (e.g., "Thank you for reaching out before sharing"), but the structural output is perfect.
 
 ---
 
@@ -517,7 +586,18 @@
 
 **Result: 6/7 fields match — MISMATCH on human_review_required**
 
-> **Why it failed:** Our engine sets `human_review_required = true` when `evidence_verdict === 'insufficient_data'`. The expected output marks it `false` because the complaint is too vague to warrant human escalation yet — it just needs a follow-up question. Our rule is too broad.
+**Why our engine failed:**
+- **human_review_required = `true` instead of `false`:** Our `determineHumanReview` function returns `true` when `evidenceVerdict === 'insufficient_data'`. This is a blanket rule. The expected output marks it `false` because the complaint is too vague to even know what to escalate — it just needs a follow-up question to the customer. Escalating a vague complaint to a human agent wastes agent time.
+
+**What the problem statement wanted (reference):**
+- Section 6.1 (Response Fields): `human_review_required` should be `true` for "disputes, suspicious cases, high value cases, or ambiguous evidence." — This complaint is not a dispute, not suspicious, not high-value, and the evidence isn't "ambiguous" (it's non-existent). It's just vague.
+- Section 3 (The Investigator Twist): The service should "decide what is true" — when the complaint is too vague to even identify a transaction, the right decision is to ask for clarification, not escalate.
+
+**How to fix it:**
+1. **Narrow the `human_review_required` rule in `lib/evidence-engine.js`:** In `determineHumanReview`, remove the blanket `evidenceVerdict === 'insufficient_data' → true` rule. Instead:
+   - If `evidenceVerdict === 'insufficient_data'` AND `caseType === 'other'` (vague complaint) → `false`
+   - If `evidenceVerdict === 'insufficient_data'` AND `caseType !== 'other'` (specific claim but no matching transaction) → `true`
+   - If `evidenceVerdict === 'inconsistent'` → `true` (disputed evidence always needs human review)
 
 ---
 
@@ -595,7 +675,19 @@
 
 **Result: 5/7 fields match — MISMATCH on severity and human_review_required**
 
-> **Why it failed:** (1) Severity defaults to `medium` from `SEVERITY_CASE_TYPE_MAP` for `agent_cash_in_issue`. Expected output marks it `high` because the customer is losing trust. (2) `human_review_required` is `false` because `agent_cash_in_issue` at `medium` severity doesn't trigger any escalation rule. Expected output marks it `true` because the agent claims funds were sent but the customer doesn't see them.
+**Why our engine failed:**
+1. **severity = `medium` instead of `high`:** Our `SEVERITY_CASE_TYPE_MAP` maps `agent_cash_in_issue` → `medium`. The expected output uses `high` because the customer's balance doesn't reflect the deposit, the transaction is `pending`, and the agent and customer have conflicting accounts — this is an active dispute requiring urgent attention.
+2. **human_review_required = `false` instead of `true`:** Since severity is `medium`, none of our escalation rules trigger. The expected output marks it `true` because there's a disagreement between agent and customer about whether funds were sent — this inherently needs human resolution.
+
+**What the problem statement wanted (reference):**
+- Section 6.1 (Response Fields): `severity` should reflect operational urgency. A pending cash-in with customer complaint and agent dispute is high urgency.
+- Section 6.1: `human_review_required` should be `true` for "disputes" — this IS a dispute: the agent says funds were sent, the customer says they weren't.
+- Section 7.1 (case_type): `agent_cash_in_issue` is for "Cash deposit through an agent not reflected in customer balance" — this exactly describes the scenario.
+
+**How to fix it:**
+1. **Add pending-status severity boost in `lib/evidence-engine.js`:** In `determineSeverity`, if `tx.status === 'pending'` and the complaint indicates non-receipt, boost severity to `high`. A pending transaction with a customer complaint is operationally urgent.
+2. **Add agent-customer conflict detection:** If `case_type === 'agent_cash_in_issue'` and `tx.status === 'pending'`, always set `human_review_required = true`. The conflicting accounts between agent and customer require human resolution.
+3. **Bangla keyword coverage:** Add `"ব্যালেন্সে টাকা আসেনি"` (balance-e taka aseni) and `"ক্যাশ ইন"` to the agent_cash_in_issue keyword list. Currently the engine matches via the `cash_in` type match, but Bangla complaint keywords would improve confidence.
 
 ---
 
@@ -689,7 +781,24 @@
 
 **Result: 1/7 fields match — CRITICAL MISMATCH on 6 fields**
 
-> **Why it failed:** This is the worst-performing case. Three 1000 BDT transfers exist on the same date. Our engine matched TXN-9801 (first one) because it had the best aggregate score from type matching. It did not detect the ambiguity of multiple matches. The expected output correctly returns `insufficient_data` and asks for the brother's number to disambiguate. Our engine has no "ambiguous match rejection" logic.
+**Why our engine failed:**
+1. **relevant_transaction_id = `TXN-9801` instead of `null`:** Three 1000 BDT transfers exist on the same date. Our engine scored TXN-9801 highest because it matched the `type_match_transfer` signal and appeared first. It did NOT detect that multiple transactions scored similarly — which should trigger ambiguity rejection.
+2. **evidence_verdict = `consistent` instead of `insufficient_data`:** Since the engine picked TXN-9801 as the match, it marked it `consistent`. But with 3 plausible matches to 2 different recipients, the evidence is genuinely ambiguous.
+3. **case_type = `other` instead of `wrong_transfer`:** The complaint says "sent 1000... didn't get it" which implies a transfer issue. Our keyword matching for `wrong_transfer` requires specific keywords like "wrong number" or "wrong person" which aren't present. The complaint is more about a non-received transfer, which our engine doesn't cleanly classify.
+4. **severity = `low` instead of `medium`:** `other` maps to `low` in our severity table. The expected output uses `medium` because there's an actual transfer dispute.
+5. **department = `customer_support` instead of `dispute_resolution`:** Follows from wrong case_type — `other` routes to `customer_support`.
+6. **human_review_required = `false` instead of `true`:** With `severity = low` and no escalation triggers, our engine doesn't flag it. The expected output marks it `true` because the evidence is ambiguous and the customer's claim needs verification.
+
+**What the problem statement wanted (reference):**
+- Section 3 (The Investigator Twist): "The complaint says one thing. The data may show another. Your service decides what is true. When the evidence is genuinely unclear, the system must say so, not guess." — This is the core lesson. Our engine guessed instead of admitting uncertainty.
+- Section 6.1 (Response Fields): `relevant_transaction_id` should be "null if no transaction in the provided history matches" — When multiple transactions could match and you can't determine which one, the correct answer is null, not picking one at random.
+- Section 6.1: `evidence_verdict` should be `insufficient_data` when "cannot be determined from the provided history" — 3 transactions to 2 recipients = cannot determine which is the brother's number.
+- Section 6.1: `recommended_next_action` should be a "Suggested operational next step" — asking for the brother's number is the correct next step when the data is ambiguous.
+
+**How to fix it:**
+1. **Add ambiguous match rejection in `lib/evidence-engine.js`:** After `aggregateScores`, check if the top 2-3 transactions have scores within 20% of each other AND map to different counterparties. If so, set `relevant_transaction_id = null`, `evidence_verdict = 'insufficient_data'`, and add reason_code `'ambiguous_match'`. The threshold should be: if `aggregated.length >= 2` and `aggregated[0].score - aggregated[1].score < 0.3`, treat as ambiguous.
+2. **Improve case_type classification for "didn't get it" complaints:** Add keywords like `"didn't get"`, `"not received"`, `"not reflected"`, `"যায়নি"`, `"পাইনি"` to map to `wrong_transfer` or create a clearer signal that this is a transfer dispute.
+3. **Add `needs_clarification` reason_code** when the complaint lacks enough detail to identify the specific transaction.
 
 ---
 
@@ -767,7 +876,18 @@
 
 **Result: 5/7 fields match — MISMATCH on severity and human_review_required**
 
-> **Why it failed:** Our engine assigns `high` severity because the amount (15000) exceeds the 10000 threshold. Expected output uses `medium` because settlement delays are operationally routine. The `human_review_required=true` comes from the `severity === 'high'` rule.
+**Why our engine failed:**
+1. **severity = `high` instead of `medium`:** Our amount-based override kicks in at >=10000 BDT → `high`. The 15000 BDT amount triggers this. But settlement delays are operationally routine — the money isn't lost, it's just late. The expected output correctly uses `medium`.
+2. **human_review_required = `true` instead of `false`:** Since severity is `high`, our `severity === 'high'` rule triggers escalation. The expected output marks it `false` because settlement delays are handled by automated batch reconciliation — they don't need individual human review.
+
+**What the problem statement wanted (reference):**
+- Section 7.1 (case_type): `merchant_settlement_delay` is for "Merchant settlement not received within expected window" — this is a routine operational issue, not a critical incident.
+- Section 6.1 (Response Fields): `severity` should reflect the actual risk level. Settlement delays are common during high-volume campaigns and are resolved by the payments ops team through batch processes, not individual investigation.
+- Section 6.1: `human_review_required` should be reserved for cases that genuinely need human judgment. Batch settlement delays are procedural.
+
+**How to fix it:**
+1. **Override amount-based severity for `merchant_settlement_delay`:** In `determineSeverity`, if `caseType === 'merchant_settlement_delay'`, cap severity at `medium` regardless of amount. Settlement delays are not high-risk incidents.
+2. **Exclude settlement delays from `severity === 'high'` escalation:** In `determineHumanReview`, if `caseType === 'merchant_settlement_delay'` and `severity === 'high'` (from amount), don't trigger `human_review_required`. The merchant_operations team handles these through standard batch processes.
 
 ---
 
@@ -853,7 +973,16 @@
 
 **Result: 6/7 fields match — MISMATCH on relevant_transaction_id**
 
-> **Why it failed:** Both transactions have the same amount, counterparty, type, and similar timestamps. Our engine matched TXN-10001 (first one) because it appeared first in the aggregation. Expected output picks TXN-10002 (the suspected duplicate — second one). The engine needs "for duplicate payments, point to the later transaction" logic.
+**Why our engine failed:**
+- **relevant_transaction_id = `TXN-10001` instead of `TXN-10002`:** Both transactions have identical amount (850), counterparty (BILLER-DESCO), type (payment), and status (completed), with timestamps only 12 seconds apart. Our `aggregateScores` function picks the first transaction in the array because both have identical scores. The expected output picks TXN-10002 (the later one) because in a duplicate scenario, the second transaction is the suspected duplicate.
+
+**What the problem statement wanted (reference):**
+- Section 6.1 (Response Fields): `relevant_transaction_id` should point to the transaction the complaint refers to. For duplicate payments, the complaint is about the EXTRA charge — which is the second transaction (TXN-10002).
+- Section 6.1: `agent_summary` should explain "Concise agent ready summary of the case" — the expected output correctly notes "The second is likely the duplicate" which is operationally useful.
+
+**How to fix it:**
+1. **Add duplicate-payment direction logic in `lib/evidence-engine.js`:** After classifying `case_type === 'duplicate_payment'`, if multiple transactions match with similar scores, pick the LAST one (most recent) as `relevant_transaction_id` instead of the first. The second transaction is the suspected duplicate.
+2. **Add `biller_verification_required` to reason_codes** for duplicate payments to signal that the biller needs to confirm which payment was received.
 
 ---
 
@@ -864,10 +993,10 @@
 | **HIGH** | No ambiguous match rejection — should return `insufficient_data` when multiple transactions score similarly | SAMPLE-08 | Medium |
 | **HIGH** | No established-recipient pattern detection for inconsistent verdict | SAMPLE-02 | Medium |
 | **HIGH** | Duplicate payment should point to the later transaction, not the first | SAMPLE-10 | Low |
-| **MEDIUM** | `human_review_required` rule too broad for `insufficient_data` | SAMPLE-06 | Low |
-| **MEDIUM** | `payment_failed` with deduction should be `high` severity regardless of amount | SAMPLE-03 | Low |
-| **MEDIUM** | `agent_cash_in_issue` with pending status should be `high` severity | SAMPLE-07 | Low |
-| **MEDIUM** | Amount-based severity threshold ignores case-type context (settlement delays are routine) | SAMPLE-09 | Low |
+| **MEDIUM** | `human_review_required` rule too broad for `insufficient_data` on vague complaints | SAMPLE-06 | Low |
+| **MEDIUM** | `payment_failed` with deduction claim should be `high` severity regardless of amount | SAMPLE-03 | Low |
+| **MEDIUM** | `agent_cash_in_issue` with pending status should be `high` severity + human review | SAMPLE-07 | Low |
+| **MEDIUM** | `merchant_settlement_delay` should cap severity at `medium` regardless of amount | SAMPLE-09 | Low |
 | **LOW** | Template fallback generates generic text — no LLM-enhanced responses | All | N/A (needs API key) |
 
 ---
