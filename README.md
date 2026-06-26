@@ -21,6 +21,19 @@
 - See `RUNBOOK.md` for step-by-step local setup instructions.
 - Docker fallback: `docker build -t queuestorm-investigator . && docker run -p 3000:3000 --env-file .env queuestorm-investigator`
 
+## System Architecture
+
+```mermaid
+flowchart TD
+    A[Client Request] --> B[Express API]
+    B --> C[Rule Engine\nclassify + match tx]
+    C --> D[LLM · OpenRouter\ngenerate text]
+    D -- timeout / fail --> E[Template Fallback]
+    D -- success --> F[Safety Filter]
+    E --> F
+    F --> G[JSON Response]
+```
+
 ## AI/Model Approach
 
 The service uses a **hybrid rule-based + LLM (via external API)** architecture:
